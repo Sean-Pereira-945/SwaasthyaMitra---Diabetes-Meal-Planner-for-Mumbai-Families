@@ -1,0 +1,5 @@
+case_id,case_type,age,bs,budget,festival,preferences,gold_accuracy,adherence_score,safety_score,latency_sec,notes
+1,baseline,45,140,500-800,None,"Maharashtrian, Jain",0.62,0.58,0.71,1.8,"No retrieval context"
+1,rag,45,140,500-800,None,"Maharashtrian, Jain",0.81,0.77,0.86,2.3,"Uses GI and recipe retrieval"
+2,baseline,55,168,800-1200,Diwali,"Gujarati vegetarian, no garlic",0.57,0.52,0.68,1.7,"Festival substitutions generic"
+2,rag,55,168,800-1200,Diwali,"Gujarati vegetarian, no garlic",0.79,0.74,0.84,2.4,"Festival substitutions localized"
