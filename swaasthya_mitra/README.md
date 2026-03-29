@@ -83,6 +83,16 @@ Optional file for budget pricing quality:
 python scripts/phase1_smoke_test.py
 ```
 
+### 4.1) Pre-deploy check (recommended)
+
+From the repository root, run:
+
+```powershell
+python swaasthya_mitra/scripts/predeploy_check.py
+```
+
+This installs dependencies from root requirements.txt and verifies critical imports used by the app startup path.
+
 ### 5) Start app
 
 ```powershell
@@ -181,3 +191,4 @@ docker run -p 8501:8501 -v "${PWD}/data:/app/data" swaasthya-mitra
 - If streamlit run app.py fails with file not found, run command from swaasthya_mitra folder or use absolute path.
 - If port 8501 is busy, stop existing process or choose a different port.
 - If startup warns about missing data files, add required CSV and PDF files under data.
+- If Streamlit Cloud shows ModuleNotFoundError for dotenv, confirm root requirements.txt exists and app entrypoint is set to swaasthya_mitra/app.py.
