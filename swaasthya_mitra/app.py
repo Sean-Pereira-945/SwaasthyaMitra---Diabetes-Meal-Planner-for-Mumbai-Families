@@ -28,6 +28,7 @@ CSV_DIR = ROOT / "data" / "csvs"
 CHROMA_DIR = ROOT / "data" / "chroma_db"
 OUTPUTS_DIR = ROOT / "outputs"
 HISTORY_CSV = OUTPUTS_DIR / "plan_history.csv"
+PROFILES_CSV = OUTPUTS_DIR / "profiles.csv"
 PRICE_CSV = CSV_DIR / "mumbai_prices.csv"
 
 CSV_FILES = [
@@ -267,6 +268,31 @@ def load_recent_history() -> pd.DataFrame:
     if df.empty:
         return df
     return df.sort_values("created_at", ascending=False).head(20)
+
+
+def load_profile_registry() -> pd.DataFrame:
+    if not PROFILES_CSV.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(PROFILES_CSV)
+    if "updated_at" in df.columns:
+        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce")
+    return df
+
+
+def upsert_profile(details: dict[str, object]) -> None:
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    row_df = pd.DataFrame([details])
+
+    if PROFILES_CSV.exists():
+        existing = pd.read_csv(PROFILES_CSV)
+        if "profile_key" in existing.columns:
+            existing = existing[existing["profile_key"].astype(str) != str(details["profile_key"])].copy()
+        combined = pd.concat([existing, row_df], ignore_index=True)
+    else:
+        combined = row_df
+
+    combined.to_csv(PROFILES_CSV, index=False)
 
 
 def build_query(age: float | int, blood_sugar: float | int, budget: str | None, festival: str, preferences: str) -> str:
@@ -545,42 +571,107 @@ else:
     st.sidebar.info("Optional: add data/csvs/mumbai_prices.csv (item, price_per_kg).")
 
 full_history_df = load_full_history()
-available_profiles = list_profiles(full_history_df)
-selected_profile = st.sidebar.selectbox("Family Profile", available_profiles, index=0)
+profile_registry_df = load_profile_registry()
+
+if "custom_profiles" not in st.session_state:
+    st.session_state["custom_profiles"] = []
+
+history_profiles = list_profiles(full_history_df)
+saved_profiles: list[str] = []
+if not profile_registry_df.empty and "profile_name" in profile_registry_df.columns:
+    saved_profiles = [
+        str(v).strip() for v in profile_registry_df["profile_name"].dropna().tolist() if str(v).strip()
+    ]
+
 new_profile_name = st.sidebar.text_input("Create/Use New Profile", "")
-active_profile = new_profile_name.strip() if new_profile_name.strip() else selected_profile
+typed_profile = new_profile_name.strip()
+
+if typed_profile and typed_profile not in history_profiles and typed_profile not in st.session_state["custom_profiles"]:
+    st.session_state["custom_profiles"].append(typed_profile)
+
+available_profiles = sorted(set(history_profiles + saved_profiles + st.session_state["custom_profiles"]))
+default_profile = typed_profile if typed_profile else available_profiles[0]
+default_index = available_profiles.index(default_profile) if default_profile in available_profiles else 0
+selected_profile = st.sidebar.selectbox("Family Profile", available_profiles, index=default_index)
+active_profile = typed_profile if typed_profile else selected_profile
 active_profile_key = normalize_profile_key(active_profile)
 
+saved_profile_row: dict[str, Any] = {}
+if not profile_registry_df.empty and "profile_key" in profile_registry_df.columns:
+    match = profile_registry_df[profile_registry_df["profile_key"].astype(str) == active_profile_key].copy()
+    if not match.empty:
+        if "updated_at" in match.columns:
+            match = match.sort_values("updated_at", ascending=False)
+        saved_profile_row = match.iloc[0].to_dict()
+
 if not full_history_df.empty and "profile_name" in full_history_df.columns:
-    profile_history = full_history_df[full_history_df["profile_name"].astype(str) == active_profile].copy()
+    profile_history = full_history_df[
+        full_history_df["profile_name"].astype(str).str.strip() == active_profile.strip()
+    ].copy()
 else:
     profile_history = pd.DataFrame()
 
 left, right = st.columns([2, 1])
 
 with left:
+    # Reset form values whenever the active profile changes.
+    if st.session_state.get("active_profile_form_key") != active_profile_key:
+        st.session_state["active_profile_form_key"] = active_profile_key
+        st.session_state["age_input"] = int(saved_profile_row.get("age", 45) or 45)
+        st.session_state["blood_sugar_input"] = int(saved_profile_row.get("blood_sugar", 140) or 140)
+        st.session_state["budget_input"] = str(saved_profile_row.get("budget", "500-800") or "500-800")
+        st.session_state["festival_input"] = str(saved_profile_row.get("festival", "None") or "None")
+        st.session_state["preferences_input"] = str(
+            saved_profile_row.get(
+                "preferences",
+                "Maharashtrian style, Jain preferred, affordable Dadar market ingredients",
+            )
+            or "Maharashtrian style, Jain preferred, affordable Dadar market ingredients"
+        )
+
+    budget_options = ["<500", "500-800", "800-1200", ">1200"]
+    if st.session_state["budget_input"] not in budget_options:
+        st.session_state["budget_input"] = "500-800"
+
     col1, col2 = st.columns(2)
     with col1:
-        age = st.number_input("Age", min_value=18, max_value=80, value=45)
+        age = st.number_input("Age", min_value=18, max_value=80, key="age_input")
         blood_sugar = st.number_input(
             "Current fasting blood sugar (mg/dL)",
             min_value=70,
             max_value=300,
-            value=140,
+            key="blood_sugar_input",
         )
     with col2:
-        budget = st.selectbox("Weekly food budget (INR)", ["<500", "500-800", "800-1200", ">1200"])
-        festival = st.text_input("Upcoming festival (or None)", "None")
+        budget = st.selectbox("Weekly food budget (INR)", budget_options, key="budget_input")
+        festival = st.text_input("Upcoming festival (or None)", key="festival_input")
 
     preferences = st.text_area(
         "Preferences, allergies, family style",
-        "Maharashtrian style, Jain preferred, affordable Dadar market ingredients",
+        key="preferences_input",
     )
 
     st.info(
         "This tool is educational support, not medical advice. "
         "Users should validate plans with a qualified doctor or dietitian."
     )
+
+    if st.button("Save Profile Details"):
+        upsert_profile(
+            {
+                "updated_at": datetime.now().isoformat(),
+                "profile_key": active_profile_key,
+                "profile_name": active_profile,
+                "age": age,
+                "blood_sugar": blood_sugar,
+                "budget": budget,
+                "festival": festival,
+                "preferences": preferences,
+            }
+        )
+        st.success(f"Profile '{active_profile}' saved.")
+
+    generate_clicked = st.button("Generate 7-Day Low-GI Meal Plan", type="primary")
 
 with right:
     st.subheader("30-Day History")
@@ -589,7 +680,7 @@ with right:
         st.caption("No plans generated yet.")
     else:
         preview = history_df[["created_at", "mode", "age", "blood_sugar", "festival", "validator_score", "medically_safe"]].copy()
-        st.dataframe(preview, use_container_width=True, hide_index=True)
+        st.dataframe(preview, use_container_width=True, hide_index=True, height=220)
 
     st.subheader("Profile Trends")
     if profile_history.empty:
@@ -598,11 +689,19 @@ with right:
         trend_df = profile_history.sort_values("created_at").copy()
         trend_df["created_at"] = pd.to_datetime(trend_df["created_at"], errors="coerce")
         if "validator_score" in trend_df.columns:
-            st.line_chart(data=trend_df.set_index("created_at")["validator_score"])
+            validator_series = trend_df.set_index("created_at")["validator_score"].dropna()
+            if validator_series.shape[0] >= 2:
+                st.line_chart(data=validator_series, height=180)
+            elif validator_series.shape[0] == 1:
+                st.caption("Need at least 2 plans to draw validator score trend.")
         if "avg_gi" in trend_df.columns:
-            st.line_chart(data=trend_df.set_index("created_at")["avg_gi"])
+            gi_series = trend_df.set_index("created_at")["avg_gi"].dropna()
+            if gi_series.shape[0] >= 2:
+                st.line_chart(data=gi_series, height=180)
+            elif gi_series.shape[0] == 1:
+                st.caption("Need at least 2 plans to draw GI trend.")
 
-if st.button("Generate 7-Day Low-GI Meal Plan", type="primary"):
+if generate_clicked:
     query = build_query(age, blood_sugar, budget, festival, preferences)
     user_age = int(age)
     user_bs = int(blood_sugar)
@@ -695,6 +794,19 @@ if st.button("Generate 7-Day Low-GI Meal Plan", type="primary"):
         st.warning("Selected plan did not pass strict safety checks. Review violations before use.")
 
     if chosen_text:
+        upsert_profile(
+            {
+                "updated_at": datetime.now().isoformat(),
+                "profile_key": active_profile_key,
+                "profile_name": active_profile,
+                "age": age,
+                "blood_sugar": blood_sugar,
+                "budget": budget,
+                "festival": festival,
+                "preferences": preferences,
+            }
+        )
+
         st.caption(
             f"Active profile: {active_profile} | "
             f"Safety: {'PASS' if chosen_validation.get('medically_safe') else 'FAIL'} | "
