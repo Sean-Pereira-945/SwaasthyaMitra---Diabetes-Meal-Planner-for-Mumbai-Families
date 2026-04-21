@@ -1,4 +1,4 @@
-﻿# SwaasthyaMitra---Diabetes-Meal-Planner-for-Mumbai-Families
+﻿# SwaasthyaMitra Diabetes-Meal-Planner-for-Mumbai-Families
 
 Main project files are in the swaasthya_mitra folder.
 
